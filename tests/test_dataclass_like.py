@@ -4,7 +4,6 @@ from typing import (
     Literal,
     ReadOnly,
     TypedDict,
-    Never,
 )
 
 import typemap_extensions as typing
@@ -70,13 +69,10 @@ type InitFnType[T] = typing.Member[
                     p.name,
                     p.type,
                     # All arguments are keyword-only
-                    # It takes a default if a default is specified in the class
-                    Literal["keyword"]
-                    if typing.IsAssignable[
-                        GetDefault[p.init],
-                        Never,
-                    ]
-                    else Literal["keyword", "default"],
+                    Literal["keyword"],
+                    # GetDefault is Never when there's no default, so use it
+                    # directly as D.
+                    GetDefault[p.init],
                 ]
                 for p in typing.Iter[typing.Attrs[T]]
             ],
@@ -156,5 +152,5 @@ def test_dataclass_like_1():
             secret_name: str
             @classmethod
             def __init_subclass__[T](cls: type[T]) -> typemap.typing.UpdateClass[InitFnType[T]]: ...
-            def __init__(self: Self, *, id: int | None = ..., name: str, age: int | None = ..., secret_name: str) -> None: ...
+            def __init__(self: Self, *, id: int | None = None, name: str, age: int | None = None, secret_name: str) -> None: ...
     """)

@@ -157,10 +157,10 @@ def test_eval_types_4():
             [
                 Param[Literal["a"], int, Literal["positional"]],
                 Param[Literal["b"], int],
-                Param[Literal["c"], int, Literal["default"]],
+                Param[Literal["c"], int, Literal["positional_or_keyword"], int],
                 Param[None, int, Literal["*"]],
                 Param[Literal["d"], int, Literal["keyword"]],
-                Param[Literal["e"], int, Literal["default", "keyword"]],
+                Param[Literal["e"], int, Literal["keyword"], int],
                 Param[None, int, Literal["**"]],
             ],
             int,
@@ -172,10 +172,10 @@ def test_eval_types_4():
             [
                 Param[Literal["a"], int, Literal["positional"]],
                 Param[Literal["b"], int],
-                Param[Literal["c"], int, Literal["default"]],
+                Param[Literal["c"], int, Literal["positional_or_keyword"], int],
                 Param[None, int, Literal["*"]],
                 Param[Literal["d"], int, Literal["keyword"]],
-                Param[Literal["e"], int, Literal["default", "keyword"]],
+                Param[Literal["e"], int, Literal["keyword"], int],
                 Param[None, int, Literal["**"]],
             ],
             int,
@@ -1827,10 +1827,10 @@ def test_callable_to_signature_01():
         Params[
             Param[None, int],
             Param[Literal["b"], int],
-            Param[Literal["c"], int, Literal["default"]],
+            Param[Literal["c"], int, Literal["positional_or_keyword"], int],
             Param[None, int, Literal["*"]],
             Param[Literal["d"], int, Literal["keyword"]],
-            Param[Literal["e"], int, Literal["default", "keyword"]],
+            Param[Literal["e"], int, Literal["keyword"], int],
             Param[None, int, Literal["**"]],
         ],
         int,
@@ -1845,6 +1845,32 @@ def test_callable_to_signature_01():
         '(_arg0: int, /, b: int, c: int = ..., *args: int, '
         'd: int, e: int = ..., **kwargs: int) -> int'
     )
+
+
+def test_callable_to_signature_multi_kind_error():
+    from typemap.type_eval._eval_operators import _callable_type_to_signature
+
+    # Param can carry at most one kind; combining "positional" with
+    # "keyword" is nonsense and should be rejected.
+    callable_type = Callable[
+        Params[Param[Literal["x"], int, Literal["positional", "keyword"]]],
+        int,
+    ]
+    with pytest.raises(TypeError, match="at most one"):
+        _callable_type_to_signature(callable_type)
+
+
+def test_callable_to_signature_never_kind_error():
+    from typemap.type_eval._eval_operators import _callable_type_to_signature
+
+    # Never is not a valid kind; the explicit "normal" kind is
+    # Literal["positional_or_keyword"].
+    callable_type = Callable[
+        Params[Param[Literal["x"], int, Never]],
+        int,
+    ]
+    with pytest.raises(TypeError, match="cannot be Never"):
+        _callable_type_to_signature(callable_type)
 
 
 def test_new_protocol_with_methods_01():
