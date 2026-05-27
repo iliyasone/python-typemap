@@ -38,7 +38,7 @@ def _get_bound_type_args(
     func: types.FunctionType,
     arg_types: tuple[RtType, ...],
     kwarg_types: dict[str, RtType],
-) -> dict[str, RtType]:
+) -> dict[object, RtType]:
     # Run in ForwardRef mode so that if one of the arguments or if the
     # return value crashes due to a bad attribution projection or
     # something, the others will survive it.
@@ -48,17 +48,20 @@ def _get_bound_type_args(
 
     bound = sig.bind(*arg_types, **kwarg_types)
 
-    return {
-        tv.__name__: tp
-        for tv, tp in _get_bound_type_args_from_bound_args(sig, bound).items()
-    }
+    bound_type_args: dict[object, RtType] = {}
+    for tv, tp in _get_bound_type_args_from_bound_args(sig, bound).items():
+        bound_type_args[tv] = tp
+        if name := getattr(tv, "__name__", None):
+            bound_type_args[name] = tp
+    return bound_type_args
 
 
 def _get_bound_type_args_from_bound_args(
     sig: inspect.Signature,
     bound: inspect.BoundArguments,
-) -> dict[typing.TypeVar | typing.TypeVarTuple, RtType]:
-    vars: dict[typing.TypeVar | typing.TypeVarTuple, RtType] = {}
+) -> dict[object, RtType]:
+    vars: dict[object, RtType] = {}
+    _update_bound_self_from_receiver(sig, bound, vars)
     # TODO: duplication, error cases
     for param in sig.parameters.values():
         # Unpack[TypeVarType] for *args
@@ -101,9 +104,11 @@ def _get_bound_type_args_from_bound_args(
         ):
             vars[tv] = arg.__args__[0]
         # trivial T bindings
-        elif isinstance(
-            param.annotation, typing.TypeVar
-        ) or _typing_inspect.is_generic_alias(param.annotation):
+        elif (
+            _is_self_type(param.annotation)
+            or isinstance(param.annotation, typing.TypeVar)
+            or _typing_inspect.is_generic_alias(param.annotation)
+        ):
             param_value = bound.arguments[param.name]
             _update_bound_typevar(
                 param.name, param.annotation, param_value, vars
@@ -117,16 +122,20 @@ def _update_bound_typevar(
     param_name: str,
     tv: Any,
     param_value: Any,
-    vars: dict[typing.TypeVar | typing.TypeVarTuple, RtType],
+    vars: dict[object, RtType],
 ) -> None:
-    if isinstance(tv, typing.TypeVar):
+    if _is_self_type(tv):
+        _update_bound_var(param_name, typing.Self, "Self", param_value, vars)
+    elif isinstance(tv, typing.TypeVar):
+        _update_bound_var(param_name, tv, tv.__name__, param_value, vars)
+    elif isinstance(tv, typing.TypeVarTuple):
         if tv not in vars:
             vars[tv] = param_value
         elif vars[tv] != param_value:
             raise ValueError(
                 f"Type variable {tv.__name__} "
-                f"is already bound to {vars[tv].__name__}, "
-                f"but got {param_value.__name__}"
+                f"is already bound to {_type_name(vars[tv])}, "
+                f"but got {_type_name(param_value)}"
             )
     elif _typing_inspect.is_generic_alias(tv):
         tv_args = tv.__args__
@@ -143,13 +152,95 @@ def _update_bound_typevar(
             _update_bound_typevar(param_name, p_arg, c_arg, vars)
 
 
+def _is_self_type(tp: Any) -> bool:
+    return tp is typing.Self or tp is typing_extensions.Self
+
+
+def _contains_self(tp: Any) -> bool:
+    if _is_self_type(tp):
+        return True
+    if isinstance(tp, list):
+        return any(_contains_self(arg) for arg in tp)
+    if _typing_inspect.is_generic_alias(tp) or isinstance(tp, types.UnionType):
+        return any(_contains_self(arg) for arg in typing.get_args(tp))
+    return False
+
+
+def _signature_contains_self(sig: inspect.Signature) -> bool:
+    return _contains_self(sig.return_annotation) or any(
+        _contains_self(param.annotation) for param in sig.parameters.values()
+    )
+
+
+def _unwrap_type_argument(tp: RtType) -> RtType:
+    if (
+        _typing_inspect.is_generic_alias(tp)
+        and typing.get_origin(tp) is type
+        and typing.get_args(tp)
+    ):
+        return typing.get_args(tp)[0]
+    return tp
+
+
+def _update_bound_self_from_receiver(
+    sig: inspect.Signature,
+    bound: inspect.BoundArguments,
+    vars: dict[object, RtType],
+) -> None:
+    if not _signature_contains_self(sig):
+        return
+
+    params = tuple(sig.parameters.values())
+    if not params:
+        return
+
+    first = params[0]
+    if first.name not in bound.arguments:
+        return
+
+    if first.name == "self" or _is_self_type(first.annotation):
+        self_type = bound.arguments[first.name]
+    elif first.name == "cls" or (
+        _typing_inspect.is_generic_alias(first.annotation)
+        and typing.get_origin(first.annotation) is type
+        and typing.get_args(first.annotation)
+        and _contains_self(typing.get_args(first.annotation)[0])
+    ):
+        self_type = _unwrap_type_argument(bound.arguments[first.name])
+    else:
+        return
+
+    _update_bound_var(first.name, typing.Self, "Self", self_type, vars)
+
+
+def _update_bound_var(
+    param_name: str,
+    var: object,
+    var_name: str,
+    param_value: RtType,
+    vars: dict[object, RtType],
+) -> None:
+    if var not in vars:
+        vars[var] = param_value
+    elif vars[var] != param_value:
+        raise ValueError(
+            f"Type variable {var_name} "
+            f"is already bound to {_type_name(vars[var])}, "
+            f"but got {_type_name(param_value)}"
+        )
+
+
+def _type_name(tp: RtType) -> str:
+    return getattr(tp, "__name__", repr(tp))
+
+
 def eval_call_with_types(
     func: types.FunctionType | typing.Callable[..., Any],
     *arg_types: RtType,
     **kwarg_types: RtType,
 ) -> RtType:
     if isinstance(func, types.FunctionType):
-        vars: dict[str, Any] = _get_bound_type_args(
+        vars: dict[object, Any] = _get_bound_type_args(
             func, arg_types, kwarg_types
         )
         for p in func.__type_params__:
@@ -182,7 +273,7 @@ def eval_call_with_types(
 
 
 def eval_func_with_type_vars(
-    func: types.FunctionType, vars: dict[str, RtType]
+    func: types.FunctionType, vars: dict[object, RtType]
 ) -> RtType:
     with _eval_typing._ensure_context() as ctx:
         return _eval_call_with_type_vars(func, vars, ctx)
@@ -190,7 +281,7 @@ def eval_func_with_type_vars(
 
 def _eval_call_with_type_vars(
     func: types.FunctionType,
-    vars: dict[str, RtType],
+    vars: dict[object, RtType],
     ctx: _eval_typing.EvalContext,
 ) -> RtType:
     old_obj = ctx.current_generic_alias
@@ -199,6 +290,7 @@ def _eval_call_with_type_vars(
         rr = get_annotations(func, vars)
         if rr is None:
             return Any
-        return _eval_typing.eval_typing(rr["return"])
+        ret = substitute(rr["return"], vars)
+        return _eval_typing.eval_typing(ret)
     finally:
         ctx.current_generic_alias = old_obj

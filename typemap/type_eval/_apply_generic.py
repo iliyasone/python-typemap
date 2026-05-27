@@ -1,4 +1,5 @@
 import annotationlib
+import collections.abc
 import contextlib
 import dataclasses
 import inspect
@@ -80,14 +81,29 @@ class Boxed:
 
 
 def substitute(ty, args):
-    if ty in args:
-        return args[ty]
-    elif isinstance(
+    if isinstance(ty, list):
+        return [substitute(t, args) for t in ty]
+
+    try:
+        if ty in args:
+            return args[ty]
+    except TypeError:
+        pass
+
+    if isinstance(
         ty, (typing_GenericAlias, types.GenericAlias, types.UnionType)
     ):
-        return ty.__origin__[*[substitute(t, args) for t in ty.__args__]]
-    elif isinstance(ty, list):
-        return [substitute(t, args) for t in ty]
+        old_args = ty.__args__
+        new_args = tuple(substitute(t, args) for t in old_args)
+        if new_args == old_args:
+            return ty
+        if hasattr(ty, "copy_with"):
+            return ty.copy_with(new_args)
+        if ty.__origin__ is collections.abc.Callable:
+            if new_args[0] is ...:
+                return ty.__origin__[..., new_args[-1]]
+            return ty.__origin__[list(new_args[:-1]), new_args[-1]]
+        return ty.__origin__[*new_args]
     else:
         return ty
 
@@ -220,7 +236,7 @@ def _make_typevar_getattr_stuck():
 
 def get_annotations(
     obj: object,
-    args: Mapping[str, object],
+    args: Mapping[Any, object],
     key: str = '__annotate__',
     cls: type | None = None,
     annos_ok: bool = True,
@@ -254,12 +270,15 @@ def get_annotations(
 
     if isinstance(rr, dict) and any(isinstance(v, str) for v in rr.values()):
         args = dict(args)
+        eval_args: dict[str, object] = {
+            k: v for k, v in args.items() if isinstance(k, str)
+        }
         # Copy in any __type_params__ that aren't provided for, so that if
         # we have to eval, we have them.
         if params := getattr(obj, "__type_params__", None):
             for param in params:
-                if str(param) not in args:
-                    args[str(param)] = param
+                if str(param) not in eval_args:
+                    eval_args[str(param)] = param
 
         # Include the class itself in args so that self-referential string
         # annotations (e.g. from `from __future__ import annotations`) in
@@ -267,21 +286,21 @@ def get_annotations(
         # solves that general problem, but it is the best we can do.)
         rcls = cls or obj
         if isinstance(rcls, (type, typing.TypeAliasType)):
-            if rcls.__name__ not in args:
-                args[rcls.__name__] = rcls
+            if rcls.__name__ not in eval_args:
+                eval_args[rcls.__name__] = rcls
 
         for k, v in rr.items():
             # Eval strings
             if isinstance(v, str):
                 with _make_typevar_getattr_stuck():
-                    v = eval(v, globs, args)
+                    v = eval(v, globs, eval_args)
                 # Handle cases where annotation is explicitly a string,
                 # e.g.:
                 #   class Foo[X]:
                 #       x: "Foo[X | None]"
                 if isinstance(v, str):
                     with _make_typevar_getattr_stuck():
-                        v = eval(v, globs, args)
+                        v = eval(v, globs, eval_args)
             rr[k] = v
 
     return rr

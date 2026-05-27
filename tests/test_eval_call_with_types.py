@@ -6,6 +6,7 @@ from typing import Callable, Generic, Literal, Self, TypeVar
 
 from typemap.type_eval import eval_call_with_types
 from typemap_extensions import (
+    Attrs,
     GenericCallable,
     GetArg,
     IsAssignable,
@@ -218,6 +219,27 @@ def test_eval_call_with_types_local_function_09():
 
     res = eval_call_with_types(func, C[int, str])
     assert res is str
+
+
+def test_eval_call_with_types_method_self_01():
+    class C:
+        def clone(self) -> Self: ...
+
+    res = eval_call_with_types(C.clone, C)
+    assert res is C
+
+
+type AttrNames[T] = tuple[*[m.name for m in Iter[Attrs[T]]]]
+
+
+def test_eval_call_with_types_method_self_in_alias_01():
+    class C:
+        x: int
+
+        def attr_names(self) -> AttrNames[Self]: ...
+
+    res = eval_call_with_types(C.attr_names, C)
+    assert res == tuple[Literal["x"]]
 
 
 def test_eval_call_with_types_bind_error_01():
