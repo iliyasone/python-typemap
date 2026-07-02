@@ -1,5 +1,13 @@
 # Type Manipulation in Python
 
+> [!NOTE]
+> This is [iliyasone's fork](https://github.com/iliyasone/python-typemap) of
+> [vercel/python-typemap](https://github.com/vercel/python-typemap), published on PyPI as
+> [`python-typemap`](https://pypi.org/project/python-typemap/) (the modules it installs keep
+> their upstream names, ``typemap`` and ``typemap_extensions``). It tracks upstream `main`
+> plus one change: method annotations are skipped when collecting `Attrs`. Apache-2.0, same
+> as upstream.
+
 This is the development repository for
 [PEP 827 – Type Manipulation](https://peps.python.org/pep-0827/),
 which proposes TypeScript-inspired type-level introspection and construction
