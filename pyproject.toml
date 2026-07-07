@@ -5,7 +5,8 @@ description = "Computed types for Python — PEP 827 implementation (fork of ver
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.14"
-dependencies = []
+# typemap.type_eval imports typing_extensions (TypeAliasType, TypeVarTuple, …)
+dependencies = ["typing-extensions>=4.12"]
 
 [project.urls]
 Homepage = "https://github.com/iliyasone/python-typemap"
