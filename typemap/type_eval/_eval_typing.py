@@ -444,9 +444,25 @@ def _eval_applied_class(obj: typing_GenericAlias, ctx: EvalContext):
         return _apply_type(obj.__origin__, new_args)
 
 
+# `collections.abc.Callable[...]` produces a different alias class than
+# `typing.Callable[...]`: it subclasses `types.GenericAlias` and flattens its
+# `__args__` (e.g. `(int, str)` instead of `([int], str)`). Without an explicit
+# registration it would fall through to `_eval_applied_type_alias` and be
+# mis-subscripted. Derive the class instead of hard-coding the private name.
+_collections_abc_CallableGenericAlias = type(
+    collections.abc.Callable[[int], int]
+)
+
+
+@_eval_types_impl.register(_collections_abc_CallableGenericAlias)
 @_eval_types_impl.register
 def _eval_callable(obj: typing_CallableGenericAlias, ctx: EvalContext):
-    """Eval a typing._CallableGenericAlias"""
+    """Eval a typing._CallableGenericAlias or collections.abc callable alias.
+
+    Both spellings are handled here: `typing.get_args` normalizes them to the
+    list-preserved shape (e.g. `([int], str)`), so the same logic applies to
+    `typing.Callable[...]` and `collections.abc.Callable[...]`.
+    """
 
     def _eval_ty_or_list(obj):
         if isinstance(obj, list):
